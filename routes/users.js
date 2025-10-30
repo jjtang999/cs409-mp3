@@ -9,12 +9,11 @@ module.exports = function (router) {
     // GET /api/users - Get all users with query parameters
     usersRoute.get(function (req, res) {
         try {
-            // Parse query parameters
             var query = {};
             var sort = {};
             var select = {};
             var skip = 0;
-            var limit = 0; // unlimited by default for users
+            var limit = 0;
             var count = false;
 
             if (req.query.where) {
@@ -62,7 +61,6 @@ module.exports = function (router) {
                 count = req.query.count === 'true';
             }
 
-            // If count is requested, return the count
             if (count) {
                 User.countDocuments(query, function (err, result) {
                     if (err) {
@@ -77,7 +75,6 @@ module.exports = function (router) {
                     });
                 });
             } else {
-                // Build query
                 var dbQuery = User.find(query).sort(sort).select(select).skip(skip);
                 
                 if (limit > 0) {
@@ -107,7 +104,6 @@ module.exports = function (router) {
 
     // POST /api/users - Create a new user
     usersRoute.post(function (req, res) {
-        // Validate required fields
         if (!req.body.name || !req.body.email) {
             return res.status(400).json({
                 message: "Name and email are required",
@@ -180,7 +176,6 @@ module.exports = function (router) {
 
     // PUT /api/users/:id - Replace a user
     userRoute.put(function (req, res) {
-        // Validate required fields
         if (!req.body.name || !req.body.email) {
             return res.status(400).json({
                 message: "Name and email are required",
@@ -202,13 +197,10 @@ module.exports = function (router) {
                 });
             }
 
-            // Store old pending tasks
             var oldPendingTasks = user.pendingTasks || [];
             
-            // Normalize newPendingTasks to always be an array
             var newPendingTasks = req.body.pendingTasks || [];
             if (!Array.isArray(newPendingTasks)) {
-                // If it's a string, convert to array
                 if (typeof newPendingTasks === 'string') {
                     newPendingTasks = [newPendingTasks];
                 } else {
@@ -216,67 +208,133 @@ module.exports = function (router) {
                 }
             }
 
-            // Replace user fields
-            user.name = req.body.name;
-            user.email = req.body.email;
-            user.pendingTasks = newPendingTasks;
+            // Calculate tasks to remove and add
+            var tasksToRemove = oldPendingTasks.filter(function (taskId) {
+                return newPendingTasks.indexOf(taskId) === -1;
+            });
 
-            user.save(function (err, updatedUser) {
-                if (err) {
-                    if (err.code === 11000) {
-                        return res.status(400).json({
-                            message: "User with this email already exists",
+            var tasksToAdd = newPendingTasks.filter(function (taskId) {
+                return oldPendingTasks.indexOf(taskId) === -1;
+            });
+
+            // Check for conflicts before saving
+            if (tasksToAdd.length > 0) {
+                Task.find({ _id: { $in: tasksToAdd } }, function (err, tasks) {
+                    if (err) {
+                        return res.status(500).json({
+                            message: "Error checking tasks",
                             data: {}
                         });
                     }
-                    return res.status(500).json({
-                        message: "Error updating user",
-                        data: {}
+
+                    // Check if any task is already assigned to another user or is completed
+                    for (var i = 0; i < tasks.length; i++) {
+                        var task = tasks[i];
+     
+                        if (task.assignedUser && 
+                            task.assignedUser !== "" && 
+                            task.assignedUser !== req.params.id) {
+                            return res.status(400).json({
+                                message: "Task is already assigned to another user",
+                                data: {}
+                            });
+                        }
+
+                        if (task.completed) {
+                            return res.status(400).json({
+                                message: "Completed tasks cannot be in pending tasks",
+                                data: {}
+                            });
+                        }
+                    }
+
+                    // No conflicts, proceed to update user
+                    user.name = req.body.name;
+                    user.email = req.body.email;
+                    user.pendingTasks = newPendingTasks;
+
+                    user.save(function (err, updatedUser) {
+                        if (err) {
+                            if (err.code === 11000) {
+                                return res.status(400).json({
+                                    message: "User with this email already exists",
+                                    data: {}
+                                });
+                            }
+                            return res.status(500).json({
+                                message: "Error updating user",
+                                data: {}
+                            });
+                        }
+
+                        // Unassign removed tasks
+                        if (tasksToRemove.length > 0) {
+                            Task.updateMany(
+                                { _id: { $in: tasksToRemove } },
+                                { assignedUser: "", assignedUserName: "unassigned" },
+                                function (err) {
+                                    if (err) {
+                                        console.error("Error unassigning tasks:", err);
+                                    }
+                                }
+                            );
+                        }
+
+                        // Assign new tasks
+                        Task.updateMany(
+                            { _id: { $in: tasksToAdd } },
+                            { assignedUser: updatedUser._id.toString(), assignedUserName: updatedUser.name },
+                            function (err) {
+                                if (err) {
+                                    console.error("Error assigning tasks:", err);
+                                }
+                            }
+                        );
+
+                        return res.status(200).json({
+                            message: "User updated",
+                            data: updatedUser
+                        });
                     });
-                }
-
-                // Update two-way references for tasks
-                // Remove tasks that are no longer in pendingTasks
-                var tasksToRemove = oldPendingTasks.filter(function (taskId) {
-                    return newPendingTasks.indexOf(taskId) === -1;
                 });
+            } else {
+                // No new tasks to add, just handle updates
+                user.name = req.body.name;
+                user.email = req.body.email;
+                user.pendingTasks = newPendingTasks;
 
-                // Add tasks that are newly added to pendingTasks
-                var tasksToAdd = newPendingTasks.filter(function (taskId) {
-                    return oldPendingTasks.indexOf(taskId) === -1;
-                });
-
-                // Unassign removed tasks
-                if (tasksToRemove.length > 0) {
-                    Task.updateMany(
-                        { _id: { $in: tasksToRemove } },
-                        { assignedUser: "", assignedUserName: "unassigned" },
-                        function (err) {
-                            if (err) {
-                                console.error("Error unassigning tasks:", err);
-                            }
+                user.save(function (err, updatedUser) {
+                    if (err) {
+                        if (err.code === 11000) {
+                            return res.status(400).json({
+                                message: "User with this email already exists",
+                                data: {}
+                            });
                         }
-                    );
-                }
+                        return res.status(500).json({
+                            message: "Error updating user",
+                            data: {}
+                        });
+                    }
 
-                // Assign new tasks
-                if (tasksToAdd.length > 0) {
-                    Task.updateMany(
-                        { _id: { $in: tasksToAdd } },
-                        { assignedUser: updatedUser._id.toString(), assignedUserName: updatedUser.name },
-                        function (err) {
-                            if (err) {
-                                console.error("Error assigning tasks:", err);
+                    if (tasksToRemove.length > 0) {
+                        Task.updateMany(
+                            { _id: { $in: tasksToRemove } },
+                            { assignedUser: "", assignedUserName: "unassigned" },
+                            function (err) {
+                                if (err) {
+                                    console.error("Error unassigning tasks:", err);
+                                }
                             }
-                        }
-                    );
-                }
+                        );
+                    }
 
-                return res.status(200).json({
-                    message: "User updated",
-                    data: updatedUser
+                    return res.status(200).json({
+                        message: "User updated",
+                        data: updatedUser
+                    });
                 });
-            });
+            }
         });
     });
 

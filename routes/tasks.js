@@ -130,23 +130,34 @@ module.exports = function (router) {
             // If task is assigned to a user, update user's pendingTasks
             if (savedTask.assignedUser && savedTask.assignedUser !== "" && !savedTask.completed) {
                 User.findById(savedTask.assignedUser, function (err, user) {
-                    if (!err && user) {
-                        if (user.pendingTasks.indexOf(savedTask._id.toString()) === -1) {
-                            user.pendingTasks.push(savedTask._id.toString());
-                            user.save(function (err) {
-                                if (err) {
-                                    console.error("Error updating user's pending tasks:", err);
-                                }
-                            });
-                        }
+                    if (err || !user) {
+                        // User doesn't exist, but task was already saved, so we just return the task
+                        return res.status(201).json({
+                            message: "Task created",
+                            data: savedTask
+                        });
                     }
+                    
+                    if (user.pendingTasks.indexOf(savedTask._id.toString()) === -1) {
+                        user.pendingTasks.push(savedTask._id.toString());
+                        user.save(function (err) {
+                            if (err) {
+                                console.error("Error updating user's pending tasks:", err);
+                            }
+                        });
+                    }
+                    
+                    return res.status(201).json({
+                        message: "Task created",
+                        data: savedTask
+                    });
+                });
+            } else {
+                return res.status(201).json({
+                    message: "Task created",
+                    data: savedTask
                 });
             }
-
-            return res.status(201).json({
-                message: "Task created",
-                data: savedTask
-            });
         });
     });
 
@@ -238,7 +249,9 @@ module.exports = function (router) {
                 // If the assigned user changed or task completed status changed
                 if (oldAssignedUser !== updatedTask.assignedUser || oldCompleted !== updatedTask.completed) {
                     
-                    // Remove task from old user's pendingTasks
+                    // Remove task from old user's pendingTasks if:
+                    // 1. The assigned user changed, OR
+                    // 2. The task was marked as completed
                     if (oldAssignedUser && oldAssignedUser !== "") {
                         User.findById(oldAssignedUser, function (err, user) {
                             if (!err && user) {
@@ -255,8 +268,14 @@ module.exports = function (router) {
                         });
                     }
 
-                    // Add task to new user's pendingTasks (if not completed)
-                    if (updatedTask.assignedUser && updatedTask.assignedUser !== "" && !updatedTask.completed) {
+                    // Add task to new user's pendingTasks ONLY if:
+                    // 1. Task is assigned to a user (not empty), AND
+                    // 2. Task is NOT completed, AND
+                    // 3. The assigned user actually changed (don't re-add if just marked completed)
+                    if (updatedTask.assignedUser && 
+                        updatedTask.assignedUser !== "" && 
+                        !updatedTask.completed && 
+                        oldAssignedUser !== updatedTask.assignedUser) {
                         User.findById(updatedTask.assignedUser, function (err, user) {
                             if (!err && user) {
                                 if (user.pendingTasks.indexOf(taskIdStr) === -1) {
