@@ -298,7 +298,6 @@ module.exports = function (router) {
                     });
                 });
             } else {
-                // No new tasks to add, just handle updates
                 user.name = req.body.name;
                 user.email = req.body.email;
                 user.pendingTasks = newPendingTasks;

@@ -9,7 +9,6 @@ module.exports = function (router) {
     // GET /api/tasks - Get all tasks with query parameters
     tasksRoute.get(function (req, res) {
         try {
-            // Parse query parameters
             var query = {};
             var sort = {};
             var select = {};
@@ -77,7 +76,6 @@ module.exports = function (router) {
                     });
                 });
             } else {
-                // Build query
                 var dbQuery = Task.find(query).sort(sort).select(select).skip(skip).limit(limit);
 
                 dbQuery.exec(function (err, tasks) {
@@ -103,7 +101,6 @@ module.exports = function (router) {
 
     // POST /api/tasks - Create a new task
     tasksRoute.post(function (req, res) {
-        // Validate required fields
         if (!req.body.name || !req.body.deadline) {
             return res.status(400).json({
                 message: "Name and deadline are required",
@@ -131,7 +128,6 @@ module.exports = function (router) {
             if (savedTask.assignedUser && savedTask.assignedUser !== "" && !savedTask.completed) {
                 User.findById(savedTask.assignedUser, function (err, user) {
                     if (err || !user) {
-                        // User doesn't exist, but task was already saved, so we just return the task
                         return res.status(201).json({
                             message: "Task created",
                             data: savedTask
@@ -201,7 +197,6 @@ module.exports = function (router) {
 
     // PUT /api/tasks/:id - Replace a task
     taskRoute.put(function (req, res) {
-        // Validate required fields
         if (!req.body.name || !req.body.deadline) {
             return res.status(400).json({
                 message: "Name and deadline are required",
@@ -227,7 +222,6 @@ module.exports = function (router) {
             var oldAssignedUser = task.assignedUser;
             var oldCompleted = task.completed;
 
-            // Replace task fields
             task.name = req.body.name;
             task.description = req.body.description || "";
             task.deadline = req.body.deadline;
@@ -249,9 +243,6 @@ module.exports = function (router) {
                 // If the assigned user changed or task completed status changed
                 if (oldAssignedUser !== updatedTask.assignedUser || oldCompleted !== updatedTask.completed) {
                     
-                    // Remove task from old user's pendingTasks if:
-                    // 1. The assigned user changed, OR
-                    // 2. The task was marked as completed
                     if (oldAssignedUser && oldAssignedUser !== "") {
                         User.findById(oldAssignedUser, function (err, user) {
                             if (!err && user) {
@@ -268,10 +259,6 @@ module.exports = function (router) {
                         });
                     }
 
-                    // Add task to new user's pendingTasks ONLY if:
-                    // 1. Task is assigned to a user (not empty), AND
-                    // 2. Task is NOT completed, AND
-                    // 3. The assigned user actually changed (don't re-add if just marked completed)
                     if (updatedTask.assignedUser && 
                         updatedTask.assignedUser !== "" && 
                         !updatedTask.completed && 
